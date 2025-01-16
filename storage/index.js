@@ -1,43 +1,34 @@
-import { Pool } from 'pg';
 import config from '../config/index.js';
+import { createEnvironment, ENV_TYPE_PLAIN, updateEnvironment } from '../services/vercel.js';
+import { fetchEnvironment } from '../utils/index.js';
+
+const ENV_KEY = 'APP_STORAGE';
 
 class Storage {
-  constructor() {
-    this.pool = new Pool({
-      connectionString: process.env.DATABASE_URL,
-      ssl: {
-        rejectUnauthorized: false, // 適用於 Vercel 托管服務
-      },
-    });
-  }
+  env;
+
+  data = {};
 
   async initialize() {
-    try {
-      // 初始化資料庫結構
-      await this.pool.query(`
-        CREATE TABLE IF NOT EXISTS app_storage (
-          key VARCHAR(255) PRIMARY KEY,
-          value TEXT NOT NULL
-        );
-      `);
-      console.log('Database initialized successfully.');
-    } catch (err) {
-      console.error('Error initializing database:', err.message);
+    if (!config.VERCEL_ACCESS_TOKEN) return;
+    this.env = await fetchEnvironment(ENV_KEY);
+    if (!this.env) {
+      const { data } = await createEnvironment({
+        key: ENV_KEY,
+        value: JSON.stringify(this.data),
+        type: ENV_TYPE_PLAIN,
+      });
+      this.env = data.created;
     }
+    this.data = JSON.parse(this.env.value);
   }
 
   /**
    * @param {string} key
-   * @returns {Promise<string|null>}
+   * @returns {string}
    */
-  async getItem(key) {
-    try {
-      const result = await this.pool.query('SELECT value FROM app_storage WHERE key = $1', [key]);
-      return result.rows[0]?.value || null;
-    } catch (err) {
-      console.error(`Error fetching key "${key}":`, err.message);
-      return null;
-    }
+  getItem(key) {
+    return this.data[key];
   }
 
   /**
@@ -45,18 +36,13 @@ class Storage {
    * @param {string} value
    */
   async setItem(key, value) {
-    try {
-      const query = `
-        INSERT INTO app_storage (key, value)
-        VALUES ($1, $2)
-        ON CONFLICT (key)
-        DO UPDATE SET value = EXCLUDED.value;
-      `;
-      await this.pool.query(query, [key, value]);
-      console.log(`Key "${key}" updated successfully.`);
-    } catch (err) {
-      console.error(`Error setting key "${key}":`, err.message);
-    }
+    this.data[key] = value;
+    if (!config.VERCEL_ACCESS_TOKEN) return;
+    await updateEnvironment({
+      id: this.env.id,
+      value: JSON.stringify(this.data, null, config.VERCEL_ENV ? 0 : 2),
+      type: ENV_TYPE_PLAIN,
+    });
   }
 }
 
