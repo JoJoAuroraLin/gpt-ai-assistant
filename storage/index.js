@@ -1,34 +1,43 @@
-import config from '../config/index.js';
-import { createEnvironment, ENV_TYPE_PLAIN, updateEnvironment } from '../services/vercel.js';
-import { fetchEnvironment } from '../utils/index.js';
-
-const ENV_KEY = 'APP_STORAGE';
+import { Pool } from 'pg';
 
 class Storage {
-  env;
-
-  data = {};
+  constructor() {
+    // 建立資料庫連線池
+    this.pool = new Pool({
+      connectionString: process.env.DATABASE_URL, // 使用 Vercel 的 Neon Database 連線 URL
+      ssl: {
+        rejectUnauthorized: false, // 確保使用 SSL 連接（適用於雲端 Neon）
+      },
+    });
+  }
 
   async initialize() {
-    if (!config.VERCEL_ACCESS_TOKEN) return;
-    this.env = await fetchEnvironment(ENV_KEY);
-    if (!this.env) {
-      const { data } = await createEnvironment({
-        key: ENV_KEY,
-        value: JSON.stringify(this.data),
-        type: ENV_TYPE_PLAIN,
-      });
-      this.env = data.created;
+    try {
+      // 初始化資料表
+      await this.pool.query(`
+        CREATE TABLE IF NOT EXISTS app_storage (
+          key VARCHAR(255) PRIMARY KEY,
+          value TEXT NOT NULL
+        );
+      `);
+      console.log('Database initialized successfully.');
+    } catch (err) {
+      console.error('Error initializing database:', err.message);
     }
-    this.data = JSON.parse(this.env.value);
   }
 
   /**
    * @param {string} key
-   * @returns {string}
+   * @returns {Promise<string|null>}
    */
-  getItem(key) {
-    return this.data[key];
+  async getItem(key) {
+    try {
+      const result = await this.pool.query('SELECT value FROM app_storage WHERE key = $1', [key]);
+      return result.rows[0]?.value || null; // 如果找不到 key，返回 null
+    } catch (err) {
+      console.error(`Error fetching key "${key}":`, err.message);
+      return null;
+    }
   }
 
   /**
@@ -36,13 +45,18 @@ class Storage {
    * @param {string} value
    */
   async setItem(key, value) {
-    this.data[key] = value;
-    if (!config.VERCEL_ACCESS_TOKEN) return;
-    await updateEnvironment({
-      id: this.env.id,
-      value: JSON.stringify(this.data, null, config.VERCEL_ENV ? 0 : 2),
-      type: ENV_TYPE_PLAIN,
-    });
+    try {
+      const query = `
+        INSERT INTO app_storage (key, value)
+        VALUES ($1, $2)
+        ON CONFLICT (key)
+        DO UPDATE SET value = EXCLUDED.value;
+      `;
+      await this.pool.query(query, [key, value]);
+      console.log(`Key "${key}" updated successfully.`);
+    } catch (err) {
+      console.error(`Error setting key "${key}":`, err.message);
+    }
   }
 }
 
