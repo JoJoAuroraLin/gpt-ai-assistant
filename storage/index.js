@@ -1,18 +1,19 @@
 import { Pool } from 'pg';
+import config from '../config/index.js';
 
 class Storage {
   constructor() {
     this.pool = new Pool({
-      connectionString: process.env.DATABASE_URL, // Neon 提供的連線 URL
+      connectionString: process.env.DATABASE_URL,
       ssl: {
-        rejectUnauthorized: false, // Neon 預設需要開啟 SSL，這部分確保連線成功
+        rejectUnauthorized: false, // 適用於 Vercel 托管服務
       },
     });
   }
 
   async initialize() {
     try {
-      // 初始化資料表
+      // 初始化資料庫結構
       await this.pool.query(`
         CREATE TABLE IF NOT EXISTS app_storage (
           key VARCHAR(255) PRIMARY KEY,
